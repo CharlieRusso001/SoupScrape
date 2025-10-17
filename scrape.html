@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SoupScrape Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #000000;
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+            line-height: 1.4;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #111111;
+            border: 1px solid #333333;
+            border-radius: 5px;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: #000000;
+            color: #ffffff;
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid #333333;
+            grid-column: 1 / -1;
+        }
+        
+        .ascii-art {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1;
+            color: #ffffff;
+            white-space: pre;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+            color: #ffffff;
+            font-weight: normal;
+        }
+        
+        .header p {
+            font-size: 1em;
+            color: #888888;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .preview-panel {
+            background: #0a0a0a;
+            border-left: 1px solid #333333;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: calc(100vh - 200px);
+        }
+        
+        .preview-panel h3 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            font-weight: normal;
+            border-bottom: 1px solid #333333;
+            padding-bottom: 10px;
+        }
+        
+        .preview-item {
+            background: #1a1a1a;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            padding: 10px;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        .preview-item img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 3px;
+            margin-bottom: 8px;
+        }
+        
+        .preview-item .file-info {
+            color: #cccccc;
+            font-size: 0.8em;
+            margin-bottom: 5px;
+        }
+        
+        .preview-item .file-name {
+            color: #ffffff;
+            font-weight: bold;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+        
+        .preview-item .file-type {
+            color: #888888;
+            font-size: 0.8em;
+            text-transform: uppercase;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        
+        .config-section {
+            background: #1a1a1a;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+        
+        .config-section h2 {
+            color: #ffffff;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+            font-weight: normal;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: normal;
+            color: #cccccc;
+            font-size: 0.9em;
+        }
+        
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            font-size: 14px;
+            background: #000000;
+            color: #ffffff;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            transition: border-color 0.2s ease;
+        }
+        
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #ffffff;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+        
+        .checkbox-group label {
+            margin: 0;
+            font-size: 0.9em;
+        }
+        
+        .button-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        
+        .btn {
+            padding: 12px 20px;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            font-size: 14px;
+            font-weight: normal;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        .btn:hover {
+            border-color: #ffffff;
+            background: #0a0a0a;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn-primary {
+            border-color: #0066cc;
+            color: #0066cc;
+        }
+        
+        .btn-primary:hover {
+            border-color: #0088ff;
+            color: #0088ff;
+            box-shadow: 0 0 10px rgba(0, 136, 255, 0.2);
+        }
+        
+        .btn-success {
+            border-color: #00aa00;
+            color: #00aa00;
+        }
+        
+        .btn-success:hover {
+            border-color: #ffffff;
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn-warning {
+            border-color: #aa6600;
+            color: #aa6600;
+        }
+        
+        .btn-warning:hover {
+            border-color: #ff8800;
+            color: #ff8800;
+            box-shadow: 0 0 10px rgba(255, 136, 0, 0.2);
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 3px;
+            font-weight: normal;
+            display: none;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .status.success {
+            background: #001100;
+            color: #ffffff;
+            border: 1px solid #003300;
+        }
+        
+        .status.error {
+            background: #110000;
+            color: #ff0000;
+            border: 1px solid #330000;
+        }
+        
+        .status.info {
+            background: #000011;
+            color: #0088ff;
+            border: 1px solid #000033;
+        }
+        
+        .script-info {
+            background: #0a0a0a;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .script-info h3 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            font-weight: normal;
+        }
+        
+        .script-info p {
+            color: #cccccc;
+            line-height: 1.5;
+            font-size: 0.9em;
+        }
+        
+        .script-info strong {
+            color: #ffffff;
+        }
+        
+        .console-output {
+            background: #0a0a0a;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        
+        .statistics-panel {
+            background: #0a0a0a;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .statistics-panel h4 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 1em;
+            font-weight: normal;
+            border-bottom: 1px solid #333333;
+            padding-bottom: 8px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #000000;
+            border: 1px solid #333333;
+            border-radius: 3px;
+        }
+        
+        .stat-label {
+            color: #cccccc;
+            font-size: 0.9em;
+        }
+        
+        .stat-value {
+            color: #00ff00;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .console-output h4 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            font-size: 1em;
+            font-weight: normal;
+            border-bottom: 1px solid #333333;
+            padding-bottom: 8px;
+        }
+        
+        .console-text {
+            background: #000000;
+            border: 1px solid #333333;
+            border-radius: 3px;
+            padding: 10px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.8em;
+            color: #cccccc;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+            line-height: 1.4;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+                max-width: 100%;
+            }
+            
+            .preview-panel {
+                border-left: none;
+                border-top: 1px solid #333333;
+                max-height: 300px;
+            }
+            
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 1.5em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .ascii-art {
+                font-size: 9px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="ascii-art">   ▄████████  ▄██████▄  ███    █▄     ▄███████▄    ▄████████  ▄████████    ▄████████    ▄████████    ▄███████▄    ▄████████ 
+  ███    ███ ███    ███ ███    ███   ███    ███   ███    ███ ███    ███   ███    ███   ███    ███   ███    ███   ███    ███ 
+  ███    █▀  ███    ███ ███    ███   ███    ███   ███    █▀  ███    █▀    ███    ███   ███    ███   ███    ███   ███    █▀  
+  ███        ███    ███ ███    ███   ███    ███   ███        ███         ▄███▄▄▄▄██▀   ███    ███   ███    ███  ▄███▄▄▄     
+▀███████████ ███    ███ ███    ███ ▀█████████▀  ▀███████████ ███        ▀▀███▀▀▀▀▀   ▀███████████ ▀█████████▀  ▀▀███▀▀▀     
+         ███ ███    ███ ███    ███   ███                 ███ ███    █▄  ▀███████████   ███    ███   ███          ███    █▄  
+   ▄█    ███ ███    ███ ███    ███   ███           ▄█    ███ ███    ███   ███    ███   ███    ███   ███          ███    ███ 
+ ▄████████▀   ▀██████▀  ████████▀   ▄████▀       ▄████████▀  ████████▀    ███    ███   ███    █▀   ▄████▀        ██████████ 
+                                                                          ███    ███                                        </div>
+        </div>
+        
+        <div class="content">
+            <div class="script-info">
+                <h3>Available Scripts</h3>
+                <p><strong>scrape.py:</strong> Full website scraper - downloads all content including HTML, CSS, JS, and images with organized folder structure.</p>
+                <p><strong>imagesonly.py:</strong> Fast image extractor - quickly finds and downloads all images from a website into a single organized folder.</p>
+            </div>
+            
+            <div class="config-section">
+                <h2>Configuration Settings</h2>
+                <form id="configForm">
+                    <div class="form-group">
+                        <label for="start_url">Target Website URL</label>
+                        <input type="url" id="start_url" name="start_url" placeholder="https://example.com" required>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="max_pages">Max Pages to Crawl</label>
+                            <input type="number" id="max_pages" name="max_pages" min="1" max="10000" value="1000">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="delay">Delay Between Requests (seconds)</label>
+                            <input type="number" id="delay" name="delay" min="0" max="10" step="0.1" value="0.5">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="max_workers">Concurrent Workers</label>
+                            <select id="max_workers" name="max_workers">
+                                <option value="1">1 Worker (Slow but Safe)</option>
+                                <option value="3">3 Workers (Balanced)</option>
+                                <option value="5" selected>5 Workers (Recommended)</option>
+                                <option value="10">10 Workers (Fast)</option>
+                                <option value="20">20 Workers (Very Fast)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="same_domain_only">Same Domain Only</label>
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="same_domain_only" name="same_domain_only" checked>
+                                <label for="same_domain_only">Only scrape from the same domain (recommended)</label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Save Configuration</button>
+                </form>
+            </div>
+            
+            <div class="button-section">
+                <button onclick="runScript('scrape.py')" class="btn btn-success">
+                    Run Full Scraper (scrape.py)
+                </button>
+                <button onclick="runScript('imagesonly.py')" class="btn btn-warning">
+                    Run Image Extractor (imagesonly.py)
+                </button>
+            </div>
+            
+            <div id="status" class="status"></div>
+        </div>
+        
+        <div class="preview-panel">
+            <h3>Live Scraping Preview</h3>
+            
+            <!-- Statistics Panel -->
+            <div class="statistics-panel">
+                <h4>📊 Download Statistics</h4>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Total Files:</span>
+                        <span id="total-files" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Images:</span>
+                        <span id="total-images" class="stat-value">0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="preview-items"></div>
+            
+            <div class="console-output">
+                <h4>Console Output</h4>
+                <div id="console-text" class="console-text"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Load current configuration
+        async function loadConfig() {
+            try {
+                const response = await fetch('/config');
+                const config = await response.json();
+                
+                document.getElementById('start_url').value = config.start_url || '';
+                document.getElementById('max_pages').value = config.max_pages || 1000;
+                document.getElementById('delay').value = config.delay || 0.5;
+                document.getElementById('max_workers').value = config.max_workers || 5;
+                document.getElementById('same_domain_only').checked = config.same_domain_only !== false;
+            } catch (error) {
+                showStatus('Error loading configuration: ' + error.message, 'error');
+            }
+        }
+        
+        // Auto-save configuration every 0.2 seconds
+        let saveTimeout;
+        let lastConfig = {};
+        
+        function getCurrentConfig() {
+            const form = document.getElementById('configForm');
+            const formData = new FormData(form);
+            return {
+                start_url: formData.get('start_url'),
+                max_pages: parseInt(formData.get('max_pages')),
+                delay: parseFloat(formData.get('delay')),
+                max_workers: parseInt(formData.get('max_workers')),
+                same_domain_only: formData.get('same_domain_only') === 'on'
+            };
+        }
+        
+        function hasConfigChanged() {
+            const currentConfig = getCurrentConfig();
+            return JSON.stringify(currentConfig) !== JSON.stringify(lastConfig);
+        }
+        
+        async function autoSaveConfig() {
+            if (hasConfigChanged()) {
+                const config = getCurrentConfig();
+                lastConfig = { ...config };
+                
+                try {
+                    const response = await fetch('/save_config', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(config)
+                    });
+                    
+                    if (response.ok) {
+                        // Show subtle indicator that config was saved
+                        const statusDiv = document.getElementById('status');
+                        statusDiv.style.display = 'block';
+                        statusDiv.className = 'status success';
+                        statusDiv.textContent = 'Configuration auto-saved';
+                        statusDiv.style.opacity = '0.7';
+                        statusDiv.style.fontSize = '0.8em';
+                        
+                        // Hide after 1 second
+                        setTimeout(() => {
+                            statusDiv.style.display = 'none';
+                        }, 1000);
+                    }
+                } catch (error) {
+                    console.error('Auto-save error:', error);
+                }
+            }
+        }
+        
+        function scheduleAutoSave() {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(autoSaveConfig, 200); // 0.2 seconds
+        }
+        
+        // Add event listeners to all form inputs for auto-save
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('configForm');
+            const inputs = form.querySelectorAll('input, select');
+            
+            inputs.forEach(input => {
+                input.addEventListener('input', scheduleAutoSave);
+                input.addEventListener('change', scheduleAutoSave);
+            });
+            
+            // Initialize lastConfig
+            lastConfig = getCurrentConfig();
+        });
+        
+        // Keep the manual save button for immediate feedback
+        document.getElementById('configForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await autoSaveConfig();
+            showStatus('Configuration saved!', 'success');
+        });
+        
+        // Global variables for tracking
+        let scrapingActive = false;
+        let consoleOutput = '';
+        let totalFiles = 0;
+        let totalImages = 0;
+        
+        // Update statistics display
+        function updateStatistics(stats) {
+            if (stats) {
+                totalFiles = stats.totalFiles || 0;
+                totalImages = stats.totalImages || 0;
+                
+                document.getElementById('total-files').textContent = totalFiles;
+                document.getElementById('total-images').textContent = totalImages;
+            }
+        }
+        
+        // Update console output
+        function updateConsoleOutput(newOutput) {
+            // Backend sends the complete output (last 50 lines), so replace instead of append
+            // Update even if empty to show "Waiting for output..." message
+            consoleOutput = newOutput || 'No output yet...';
+            const consoleDiv = document.getElementById('console-text');
+            consoleDiv.textContent = consoleOutput;
+            // Auto-scroll to bottom
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        }
+        
+        // Add preview item
+        function addPreviewItem(item) {
+            const previewContainer = document.getElementById('preview-items');
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'preview-item';
+            
+            let content = '';
+            if (item.type === 'image' && item.data) {
+                content = `
+                    <img src="data:${item.mimeType};base64,${item.data}" alt="${item.name}">
+                    <div class="file-info">Image • ${item.size} bytes</div>
+                    <div class="file-name">${item.name}</div>
+                    <div class="file-type">${item.extension}</div>
+                `;
+            } else {
+                content = `
+                    <div class="file-info">${item.type} • ${item.size || 'Unknown'} bytes</div>
+                    <div class="file-name">${item.name}</div>
+                    <div class="file-type">${item.extension}</div>
+                `;
+            }
+            
+            itemDiv.innerHTML = content;
+            previewContainer.insertBefore(itemDiv, previewContainer.firstChild);
+            
+            // Keep only last 20 items
+            while (previewContainer.children.length > 20) {
+                previewContainer.removeChild(previewContainer.lastChild);
+            }
+        }
+        
+        // Poll for updates during scraping
+        function pollForUpdates() {
+            if (!scrapingActive) return;
+            
+            fetch('/scraping_status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.active) {
+                        
+                        // Add new items
+                        if (data.newItems && data.newItems.length > 0) {
+                            data.newItems.forEach(item => addPreviewItem(item));
+                        }
+                        
+                        // Update console output (always update, even if empty)
+                        if (data.consoleOutput !== undefined && data.consoleOutput !== null) {
+                            updateConsoleOutput(data.consoleOutput);
+                        }
+                        
+                        // Update statistics
+                        if (data.statistics) {
+                            updateStatistics(data.statistics);
+                        }
+                        
+                        // Continue polling - faster updates (250ms = 4 times per second)
+                        setTimeout(pollForUpdates, 250);
+                    } else {
+                        scrapingActive = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error polling for updates:', error);
+                    setTimeout(pollForUpdates, 500);  // Slower retry on error
+                });
+        }
+        
+        // Run script
+        async function runScript(scriptName) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'status info';
+            statusDiv.textContent = `Starting ${scriptName}... Please wait...`;
+            
+            // Reset preview and statistics
+            document.getElementById('preview-items').innerHTML = '';
+            consoleOutput = '';
+            document.getElementById('console-text').textContent = '';
+            totalFiles = 0;
+            totalImages = 0;
+            document.getElementById('total-files').textContent = '0';
+            document.getElementById('total-images').textContent = '0';
+            scrapingActive = true;
+            
+            // Start polling for updates
+            pollForUpdates();
+            
+            try {
+                const response = await fetch('/run_script', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ script: scriptName })
+                });
+                
+                const result = await response.json();
+                
+                scrapingActive = false;
+                
+                if (result.success) {
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `${scriptName} completed successfully!<br>Output: ${result.output}`;
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = `${scriptName} failed:<br>${result.error}`;
+                }
+            } catch (error) {
+                scrapingActive = false;
+                statusDiv.className = 'status error';
+                statusDiv.textContent = 'Error running script: ' + error.message;
+            }
+        }
+        
+        // Show status message
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.style.display = 'block';
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+        
+        
+        // Load configuration on page load
+        loadConfig();
+    </script>
+</body>
+</html>
