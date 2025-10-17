@@ -18,8 +18,8 @@ A Python-based web scraping toolkit that provides comprehensive website mirrorin
 
 - **Full Website Mirroring**: Complete website download with HTML, CSS, JavaScript, images, and other assets
 - **Image-Only Extraction**: Dedicated image scraper for bulk image downloads
+- **JavaScript Support**: Uses Selenium to capture dynamically loaded content and images
 - **Web Interface**: HTML-based control panel for configuration and monitoring
-- **Real-time Statistics**: Live tracking of download progress and file counts
 - **Concurrent Processing**: Multi-threaded downloads for improved performance
 - **Domain Validation**: Built-in URL accessibility testing
 - **Graceful Shutdown**: Ctrl+C support for clean process termination
@@ -75,9 +75,25 @@ python imagesonly.py  # Image extraction only
 
 ## Requirements
 
+### Core Dependencies
 - Python 3.7+
 - requests
 - beautifulsoup4
-- Standard library modules: os, sys, json, threading, subprocess, http.server, urllib, time, base64, mimetypes, signal
+- lxml
 
-The system uses concurrent processing with ThreadPoolExecutor for efficient downloads. Image previews are generated using base64 encoding with a 5MB size limit. The web interface polls for updates every 250ms during active scraping operations.
+### Optional: JavaScript Support
+- selenium (for JavaScript-rendered content)
+- Chrome browser
+- ChromeDriver
+
+### Installation
+```bash
+# Install core dependencies
+pip install -r requirements.txt
+
+# For JavaScript support (optional)
+pip install selenium
+# Download ChromeDriver from https://chromedriver.chromium.org/
+```
+
+The system uses concurrent processing with ThreadPoolExecutor for efficient downloads. When Selenium is available, it automatically uses it for the first few pages to capture JavaScript-rendered content and images.

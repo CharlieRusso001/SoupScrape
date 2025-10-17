@@ -1,0 +1,11 @@
+# SoupScrape Requirements
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+requests>=2.25.0
+beautifulsoup4>=4.9.0
+lxml>=4.6.0
+
+# Optional: For JavaScript-rendered content
+selenium>=4.0.0
+

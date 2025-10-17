@@ -16,6 +16,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import signal
 
+# Try to import Selenium for JavaScript rendering
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    print("⚠️  Selenium not available. Install with: pip install selenium")
+    print("   JavaScript-rendered images will not be detected.")
+
 # Fix Windows encoding issues
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -48,11 +62,6 @@ IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.bmp', 
 def read_config():
     """Read configuration from config.txt."""
     config = {
-        'start_url': 'https://www.enchantedwave.com/',
-        'max_pages': 1000,
-        'delay': 0.5,
-        'max_workers': 5,
-        'same_domain_only': True
     }
     
     try:
@@ -83,6 +92,28 @@ def ensure_dir(path):
     """Ensure directory exists."""
     os.makedirs(path, exist_ok=True)
 
+def create_headless_driver():
+    """Create a headless Chrome driver for JavaScript rendering."""
+    if not SELENIUM_AVAILABLE:
+        return None
+    
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
+        return driver
+    except Exception as e:
+        print(f"⚠️  Could not create Chrome driver: {e}")
+        print("   Make sure Chrome and ChromeDriver are installed.")
+        return None
+
 
 def normalize_url(base_url, url):
     """Normalize URL to absolute URL."""
@@ -105,6 +136,9 @@ def normalize_url(base_url, url):
     # Clean up URL encoding issues
     url = url.replace('%20', ' ').replace('%2B', '+').replace('%2F', '/')
     
+    # Remove fragment (everything after #)
+    url, _ = urldefrag(url)
+    
     return url
 
 def is_same_origin(base_netloc, url):
@@ -114,6 +148,14 @@ def is_same_origin(base_netloc, url):
         if url_netloc == base_netloc:
             return True
         
+        # Extract base domain (remove www)
+        base_domain = base_netloc.replace('www.', '')
+        url_domain = url_netloc.replace('www.', '')
+        
+        # Check if it's the same base domain
+        if base_domain == url_domain:
+            return True
+        
         # Allow common CDN domains that are clearly part of the same website
         cdn_domains = [
             'static.wixstatic.com',
@@ -121,16 +163,23 @@ def is_same_origin(base_netloc, url):
             'static.parastorage.com',
             'wixstatic.com',
             'parastorage.com',
+            'on.demandware.static',  # Tag Heuer's CDN
+            'demandware.static',
             'cdn.',  # Any CDN subdomain
             'assets.',  # Any assets subdomain
             'media.',  # Any media subdomain
             'images.',  # Any images subdomain
+            'static.',  # Any static subdomain
         ]
         
         # Check if it's a known CDN domain
         for cdn_domain in cdn_domains:
             if cdn_domain in url_netloc:
                 return True
+        
+        # Check if it's a subdomain of the base domain
+        if url_domain.endswith('.' + base_domain):
+            return True
         
         return False
     except Exception:
@@ -171,6 +220,12 @@ def generate_safe_filename(url, content_type=None):
 def download_image_worker(session, url, output_dir, timeout=20):
     """Worker function for downloading individual images."""
     try:
+        # Debug: Log the URL being attempted
+        parsed_url = urlparse(url)
+        if not parsed_url.netloc:
+            print(f"  [debug] WARNING: URL has no netloc: {url}", flush=True)
+            return False, url, "URL has no domain"
+        
         # Try multiple URL variations for encoding issues
         urls_to_try = [url]
         if '%20' in url:
@@ -186,27 +241,82 @@ def download_image_worker(session, url, output_dir, timeout=20):
         
         for try_url in urls_to_try:
             try:
-                # First, try HEAD request to check if it's really an image
-                head_resp = session.head(try_url, timeout=timeout)
-                if head_resp.status_code == 200:
-                    content_type = head_resp.headers.get('Content-Type', '').lower()
-                    if any(ext in content_type for ext in ['image/', 'jpeg', 'png', 'gif', 'webp', 'svg']):
-                        # Now download the full image
-                        resp = session.get(try_url, timeout=timeout)
-                        if resp.status_code == 200:
+                # Try direct GET request first (some servers don't support HEAD)
+                resp = session.get(try_url, timeout=timeout, stream=True, allow_redirects=True)
+                if resp.status_code == 200:
+                    content_type = resp.headers.get('Content-Type', '').lower()
+                    content_length = resp.headers.get('Content-Length', '0')
+                    
+                    # Check if it's an image
+                    if any(ext in content_type for ext in ['image/', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'tiff']):
+                        # Check file size (skip very small files that might be errors)
+                        if content_length and int(content_length) < 50:
+                            continue
+                            
+                        filename = generate_safe_filename(try_url, content_type)
+                        filepath = os.path.join(output_dir, filename)
+                        
+                        # Ensure directory exists
+                        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                        
+                        # Download the content
+                        content = resp.content
+                        if len(content) < 50:  # Skip very small files
+                            continue
+                            
+                        with open(filepath, 'wb') as f:
+                            f.write(content)
+                        
+                        return True, try_url, f"Downloaded {len(content)} bytes"
+                    else:
+                        # Check if it's an SVG or other image type that might not have proper content-type
+                        parsed_url = urlparse(try_url)
+                        path_lower = parsed_url.path.lower()
+                        if any(ext in path_lower for ext in ['.svg', '.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff']):
+                            # It looks like an image file, try to download it anyway
                             filename = generate_safe_filename(try_url, content_type)
                             filepath = os.path.join(output_dir, filename)
                             
-                            with open(filepath, 'wb') as f:
-                                f.write(resp.content)
+                            os.makedirs(os.path.dirname(filepath), exist_ok=True)
                             
-                            return True, try_url, f"Downloaded {len(resp.content)} bytes"
-                        else:
-                            continue
-                    else:
-                        continue
+                            content = resp.content
+                            if len(content) > 50:  # Only save if it has reasonable content
+                                with open(filepath, 'wb') as f:
+                                    f.write(content)
+                                
+                                return True, try_url, f"Downloaded {len(content)} bytes (no content-type)"
+                elif resp.status_code == 404:
+                    continue  # Try next URL variation
+                elif resp.status_code in [301, 302, 303, 307, 308]:
+                    # Handle redirects
+                    redirect_url = resp.headers.get('Location')
+                    if redirect_url:
+                        # Try the redirect URL
+                        redirect_resp = session.get(redirect_url, timeout=timeout, stream=True)
+                        if redirect_resp.status_code == 200:
+                            content_type = redirect_resp.headers.get('Content-Type', '').lower()
+                            if any(ext in content_type for ext in ['image/', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'tiff']):
+                                filename = generate_safe_filename(redirect_url, content_type)
+                                filepath = os.path.join(output_dir, filename)
+                                
+                                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                                
+                                content = redirect_resp.content
+                                if len(content) > 50:
+                                    with open(filepath, 'wb') as f:
+                                        f.write(content)
+                                    
+                                    return True, redirect_url, f"Downloaded {len(content)} bytes (redirected)"
                 else:
                     continue
+            except requests.exceptions.RequestException as e:
+                # Log the specific error for debugging
+                if "404" in str(e) or "Not Found" in str(e):
+                    continue  # Try next URL variation
+                elif "timeout" in str(e).lower():
+                    continue  # Try next URL variation
+                else:
+                    continue  # Try next URL variation
             except Exception:
                 continue
         
@@ -215,9 +325,200 @@ def download_image_worker(session, url, output_dir, timeout=20):
     except Exception as e:
         return False, url, f"Worker error: {e}"
 
-def discover_images_fast(session, start_url, max_pages=10, delay=0.1, timeout=10):
-    """Fast image discovery - optimized to not get stuck."""
-    print(f"Discovering images on {start_url}...", flush=True)
+def discover_and_download_images_with_selenium(driver, start_url, output_dir, max_pages=5, max_workers=5, timeout=20):
+    """Discover and download images using Selenium for JavaScript-rendered content."""
+    if not driver:
+        return set(), 0, 0
+    
+    print(f"🔍 Using Selenium to discover and download JavaScript-rendered images...", flush=True)
+    
+    parsed = urlparse(start_url)
+    base_netloc = parsed.netloc
+    image_urls = set()
+    visited = set()
+    to_visit = [start_url]
+    page_count = 0
+    downloaded_count = 0
+    failed_count = 0
+    
+    while to_visit and page_count < max_pages and not shutdown_requested:
+        url = to_visit.pop(0)
+        url, _ = urldefrag(url)
+        
+        if url in visited:
+            continue
+        if not is_same_origin(base_netloc, url):
+            continue
+        
+        page_count += 1
+        print(f"[selenium page {page_count}] {url}", flush=True)
+        
+        try:
+            driver.get(url)
+            
+            # Wait for page to load and images to appear
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Scroll down to trigger lazy loading
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            
+            # Find all img elements
+            img_elements = driver.find_elements(By.TAG_NAME, "img")
+            for img in img_elements:
+                try:
+                    src = img.get_attribute("src")
+                    if src:
+                        # Normalize the URL to make it absolute
+                        abs_src = normalize_url(url, src)
+                        if abs_src:
+                            if is_same_origin(base_netloc, abs_src):
+                                image_urls.add(abs_src)
+                            else:
+                                # Debug: Log rejected URLs
+                                parsed_abs = urlparse(abs_src)
+                                print(f"  [selenium debug] Rejected URL (domain mismatch): {parsed_abs.netloc}", flush=True)
+                    
+                    # Also check data-src for lazy loading
+                    data_src = img.get_attribute("data-src")
+                    if data_src:
+                        abs_data_src = normalize_url(url, data_src)
+                        if abs_data_src:
+                            if is_same_origin(base_netloc, abs_data_src):
+                                image_urls.add(abs_data_src)
+                            else:
+                                # Debug: Log rejected URLs
+                                parsed_abs = urlparse(abs_data_src)
+                                print(f"  [selenium debug] Rejected data-src (domain mismatch): {parsed_abs.netloc}", flush=True)
+                    
+                    # Check other common lazy loading attributes
+                    for attr in ["data-lazy", "data-original", "data-srcset"]:
+                        lazy_src = img.get_attribute(attr)
+                        if lazy_src:
+                            abs_lazy_src = normalize_url(url, lazy_src)
+                            if abs_lazy_src:
+                                if is_same_origin(base_netloc, abs_lazy_src):
+                                    image_urls.add(abs_lazy_src)
+                                else:
+                                    # Debug: Log rejected URLs
+                                    parsed_abs = urlparse(abs_lazy_src)
+                                    print(f"  [selenium debug] Rejected {attr} (domain mismatch): {parsed_abs.netloc}", flush=True)
+                        
+                except Exception:
+                    continue
+            
+            # Find background images in CSS
+            elements_with_bg = driver.find_elements(By.XPATH, "//*[@style]")
+            for element in elements_with_bg:
+                try:
+                    style = element.get_attribute("style")
+                    if "background-image" in style:
+                        # Extract URL from background-image: url(...)
+                        bg_match = re.search(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style)
+                        if bg_match:
+                            bg_url = bg_match.group(1)
+                            abs_bg_url = normalize_url(url, bg_url)
+                            if abs_bg_url and is_same_origin(base_netloc, abs_bg_url):
+                                image_urls.add(abs_bg_url)
+                except Exception:
+                    continue
+            
+            # Also check computed styles for background images
+            try:
+                all_elements = driver.find_elements(By.XPATH, "//*")
+                for element in all_elements[:50]:  # Limit to first 50 elements to avoid slowdown
+                    try:
+                        computed_style = driver.execute_script("return window.getComputedStyle(arguments[0]).backgroundImage;", element)
+                        if computed_style and computed_style != "none":
+                            # Extract URL from computed background-image
+                            bg_match = re.search(r'url\(["\']?([^"\']+)["\']?\)', computed_style)
+                            if bg_match:
+                                bg_url = bg_match.group(1)
+                                abs_bg_url = normalize_url(url, bg_url)
+                                if abs_bg_url and is_same_origin(base_netloc, abs_bg_url):
+                                    image_urls.add(abs_bg_url)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            
+            print(f"  [selenium] Found {len(image_urls)} total unique images so far", flush=True)
+            
+            # Debug: Show some example URLs found by Selenium
+            if len(image_urls) > 0:
+                sample_urls = list(image_urls)[:3]  # Show first 3 URLs
+                for sample_url in sample_urls:
+                    parsed_sample = urlparse(sample_url)
+                    print(f"  [selenium debug] Sample URL: {parsed_sample.netloc}{parsed_sample.path[:50]}...")
+            
+            # Download newly discovered images immediately
+            if image_urls:
+                print(f"  [selenium downloading] Starting download of {len(image_urls)} images...", flush=True)
+                session = requests.Session()
+                session.headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                })
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_url = {
+                        executor.submit(download_image_worker, session, img_url, output_dir, timeout): img_url
+                        for img_url in image_urls
+                    }
+                    
+                    for future in as_completed(future_to_url):
+                        if shutdown_requested:
+                            break
+                        img_url = future_to_url[future]
+                        try:
+                            success, final_url, message = future.result()
+                            if success:
+                                downloaded_count += 1
+                                print(f"  ✓ Downloaded: {os.path.basename(final_url)}", flush=True)
+                            else:
+                                failed_count += 1
+                                print(f"  ✗ Failed: {os.path.basename(img_url)} - {message}", flush=True)
+                        except Exception as e:
+                            failed_count += 1
+                            print(f"  ✗ Error: {os.path.basename(img_url)} - {e}", flush=True)
+            
+            # Find more pages to visit
+            links = driver.find_elements(By.TAG_NAME, "a")
+            new_pages = 0
+            for link in links[:10]:  # Limit to first 10 links
+                if new_pages >= 3:  # Limit new pages per page
+                    break
+                try:
+                    href = link.get_attribute("href")
+                    if href:
+                        abs_url = normalize_url(url, href)
+                        if (abs_url and is_same_origin(base_netloc, abs_url) and 
+                            abs_url not in visited and abs_url not in to_visit and
+                            not any(ext in abs_url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.bmp', '.tiff', '.css', '.js', '.pdf', '.zip'])):
+                            to_visit.append(abs_url)
+                            new_pages += 1
+                except Exception:
+                    continue
+            
+            visited.add(url)
+            
+        except TimeoutException:
+            print(f"  [selenium timeout] {url}", flush=True)
+            visited.add(url)
+        except Exception as e:
+            print(f"  [selenium error] {url}: {e}", flush=True)
+            visited.add(url)
+    
+    return image_urls, downloaded_count, failed_count
+
+def discover_and_download_images_fast(session, start_url, output_dir, max_pages=10, delay=0.1, timeout=10, max_workers=5):
+    """Fast image discovery with continuous downloading."""
+    print(f"Discovering and downloading images from {start_url}...", flush=True)
     
     parsed = urlparse(start_url)
     base_netloc = parsed.netloc
@@ -226,6 +527,8 @@ def discover_images_fast(session, start_url, max_pages=10, delay=0.1, timeout=10
     visited = set()
     to_visit = [start_url]
     page_count = 0
+    downloaded_count = 0
+    failed_count = 0
     
     while to_visit and page_count < max_pages and not shutdown_requested:
         url = to_visit.pop(0)
@@ -287,15 +590,24 @@ def discover_images_fast(session, start_url, max_pages=10, delay=0.1, timeout=10
                     if is_same_origin(base_netloc, found_url):
                         image_urls.add(found_url)
                 
-                # METHOD 2: Fast regex for relative URLs
-                relative_pattern = r'["\']([^"\']*\.(?:jpg|jpeg|png|gif|webp|svg|ico|bmp|tiff|jfif|avif))["\']'
+                # METHOD 2: Fast regex for relative URLs (including those with query parameters)
+                relative_pattern = r'["\']([^"\']*\.(?:jpg|jpeg|png|gif|webp|svg|ico|bmp|tiff|jfif|avif)(?:\?[^"\']*)?)["\']'
                 relative_urls = re.findall(relative_pattern, html_text, re.IGNORECASE)
                 for rel_url in relative_urls:
                     abs_url = normalize_url(url, rel_url)
                     if abs_url and is_same_origin(base_netloc, abs_url):
                         image_urls.add(abs_url)
                 
-                # METHOD 3: Quick BeautifulSoup for src attributes only
+                # METHOD 3: Look for URLs in src attributes that might not have been caught
+                src_pattern = r'src=["\']([^"\']+)["\']'
+                src_urls = re.findall(src_pattern, html_text, re.IGNORECASE)
+                for src_url in src_urls:
+                    if any(ext in src_url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.bmp', '.tiff', '.jfif', '.avif']):
+                        abs_url = normalize_url(url, src_url)
+                        if abs_url and is_same_origin(base_netloc, abs_url):
+                            image_urls.add(abs_url)
+                
+                # METHOD 4: Quick BeautifulSoup for src attributes only
                 soup = BeautifulSoup(html_text, "html.parser")
                 for img in soup.find_all("img", src=True):
                     img_url = normalize_url(url, img["src"])
@@ -317,6 +629,39 @@ def discover_images_fast(session, start_url, max_pages=10, delay=0.1, timeout=10
                         image_urls.add(variation)
                 
                 print(f"  [debug] Found {len(image_urls)} total unique images so far")
+                
+                # Debug: Show some example URLs found
+                if len(image_urls) > 0:
+                    sample_urls = list(image_urls)[:3]  # Show first 3 URLs
+                    for sample_url in sample_urls:
+                        parsed_sample = urlparse(sample_url)
+                        print(f"  [debug] Sample URL: {parsed_sample.netloc}{parsed_sample.path[:50]}...")
+                
+                # Download newly discovered images immediately
+                # We'll download all images found so far (this is a simple approach)
+                if image_urls:
+                    print(f"  [downloading] Starting download of {len(image_urls)} images...", flush=True)
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        future_to_url = {
+                            executor.submit(download_image_worker, session, img_url, output_dir, timeout): img_url
+                            for img_url in image_urls
+                        }
+                        
+                        for future in as_completed(future_to_url):
+                            if shutdown_requested:
+                                break
+                            img_url = future_to_url[future]
+                            try:
+                                success, final_url, message = future.result()
+                                if success:
+                                    downloaded_count += 1
+                                    print(f"  ✓ Downloaded: {os.path.basename(final_url)}", flush=True)
+                                else:
+                                    failed_count += 1
+                                    print(f"  ✗ Failed: {os.path.basename(img_url)} - {message}", flush=True)
+                            except Exception as e:
+                                failed_count += 1
+                                print(f"  ✗ Error: {os.path.basename(img_url)} - {e}", flush=True)
                 
                 # Find more pages to crawl - LIMIT to prevent infinite loops
                 new_pages = 0
@@ -348,9 +693,12 @@ def discover_images_fast(session, start_url, max_pages=10, delay=0.1, timeout=10
     
     if shutdown_requested:
         print(f"🛑 Discovery stopped by user. Found {len(image_urls)} unique images across {page_count} pages", flush=True)
+        print(f"📊 Downloaded: {downloaded_count}, Failed: {failed_count}", flush=True)
     else:
         print(f"Found {len(image_urls)} unique images across {page_count} pages", flush=True)
-    return image_urls
+        print(f"📊 Downloaded: {downloaded_count}, Failed: {failed_count}", flush=True)
+    
+    return image_urls, downloaded_count, failed_count
 
 def download_all_images(image_urls, output_dir, max_workers=5, timeout=20):
     """Download all images concurrently."""
@@ -436,14 +784,50 @@ def main():
     print(f"Same domain only: {same_domain_only}", flush=True)
     print(flush=True)
     
-    # Set up session - use minimal headers to avoid getting limited content
+    # Set up session with proper headers
     session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
     
-    # Discover all images
-    image_urls = discover_images_fast(session, start_url, max_pages, delay, timeout=10)
+    # Discover and download images using both methods
+    total_downloaded = 0
+    total_failed = 0
     
-    # Download all images
-    download_all_images(image_urls, output_dir, max_workers, timeout=20)
+    # Method 1: Fast discovery with requests (for static images)
+    print("🔍 Method 1: Fast discovery and download with requests...", flush=True)
+    static_images, static_downloaded, static_failed = discover_and_download_images_fast(
+        session, start_url, output_dir, max_pages, delay, timeout=10, max_workers=max_workers
+    )
+    total_downloaded += static_downloaded
+    total_failed += static_failed
+    print(f"📊 Method 1: Found {len(static_images)} static images, Downloaded: {static_downloaded}, Failed: {static_failed}", flush=True)
+    
+    # Method 2: Selenium discovery (for JavaScript-rendered images)
+    if SELENIUM_AVAILABLE:
+        print("🔍 Method 2: Selenium discovery and download for JavaScript images...", flush=True)
+        driver = create_headless_driver()
+        if driver:
+            try:
+                js_images, js_downloaded, js_failed = discover_and_download_images_with_selenium(
+                    driver, start_url, output_dir, max_pages=3, max_workers=max_workers, timeout=20
+                )
+                total_downloaded += js_downloaded
+                total_failed += js_failed
+                print(f"📊 Method 2: Found {len(js_images)} JavaScript-rendered images, Downloaded: {js_downloaded}, Failed: {js_failed}", flush=True)
+            finally:
+                driver.quit()
+        else:
+            print("⚠️  Selenium driver not available, skipping JavaScript discovery", flush=True)
+    else:
+        print("⚠️  Selenium not available, skipping JavaScript discovery", flush=True)
+    
+    print(f"📊 Total Results: Downloaded: {total_downloaded}, Failed: {total_failed}", flush=True)
     
     if shutdown_requested:
         print("\n🛑 Image extraction stopped by user!", flush=True)
@@ -451,7 +835,7 @@ def main():
         print("\nImage extraction complete!", flush=True)
         
         # If no images were found, provide helpful suggestions
-        if len(image_urls) == 0:
+        if total_downloaded == 0:
             print("\n💡 No images found. This could be because:")
             print("   • The website doesn't contain images")
             print("   • Images are loaded dynamically with JavaScript")
@@ -460,6 +844,7 @@ def main():
             print("\n🔧 Try:")
             print("   • Using a different website URL")
             print("   • Checking if the website loads in your browser")
+            print("   • Installing Selenium for JavaScript support: pip install selenium")
             print("   • Using the full scraper (scrape.py) instead")
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 # Web Scraper Configuration
 # Edit this file or use the web interface to configure your scraper
 
-start_url=https://charlierusso.dev/
+start_url=https://www.tagheuer.com/us/en/
 max_pages=1000
 delay=0.5
-max_workers=20
+max_workers=1
 same_domain_only=true

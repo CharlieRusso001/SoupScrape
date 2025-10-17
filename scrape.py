@@ -29,6 +29,20 @@ from queue import Queue
 import mimetypes
 import signal
 
+# Try to import Selenium for JavaScript rendering
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    print("⚠️  Selenium not available. Install with: pip install selenium")
+    print("   JavaScript-rendered content will not be detected.")
+
 # Set UTF-8 encoding for console output
 if sys.platform == 'win32':
     try:
@@ -119,6 +133,56 @@ def read_config(config_file="config.txt"):
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
+
+def create_headless_driver():
+    """Create a headless Chrome driver for JavaScript rendering."""
+    if not SELENIUM_AVAILABLE:
+        return None
+    
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
+        return driver
+    except Exception as e:
+        print(f"⚠️  Could not create Chrome driver: {e}")
+        print("   Make sure Chrome and ChromeDriver are installed.")
+        return None
+
+def fetch_with_selenium(driver, url, timeout=30):
+    """Fetch a page using Selenium to render JavaScript."""
+    if not driver:
+        return None
+    
+    try:
+        driver.get(url)
+        
+        # Wait for page to load
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Scroll down to trigger lazy loading
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        
+        # Get the rendered HTML
+        html = driver.page_source
+        return html
+        
+    except TimeoutException:
+        print(f"  [selenium timeout] {url}", flush=True)
+        return None
+    except Exception as e:
+        print(f"  [selenium error] {url}: {e}", flush=True)
+        return None
 
 
 def url_to_path(base_dir, base_netloc, url):
@@ -372,6 +436,16 @@ def mirror(start_url, outdir, max_pages=1000, delay=0.5, obey_robots=True, same_
     parsed = urlparse(start_url)
     base_netloc = parsed.netloc
     base_root = f"{parsed.scheme}://{parsed.netloc}"
+    
+    # Create Selenium driver for JavaScript rendering
+    selenium_driver = None
+    if SELENIUM_AVAILABLE:
+        print("🔍 Creating Selenium driver for JavaScript rendering...", flush=True)
+        selenium_driver = create_headless_driver()
+        if selenium_driver:
+            print("✓ Selenium driver ready", flush=True)
+        else:
+            print("⚠️  Selenium driver not available, using requests only", flush=True)
 
     # robots
     rp = urllib.robotparser.RobotFileParser()
@@ -414,14 +488,31 @@ def mirror(start_url, outdir, max_pages=1000, delay=0.5, obey_robots=True, same_
                 continue
 
             print(f"[page] fetching {url}", flush=True)
-            resp = fetch_url(session, url, stream=False, timeout=timeout)
-            if not resp:
-                visited_pages.add(url)
-                time.sleep(delay)
-                continue
-
-            content_type = resp.headers.get("Content-Type", "")
-            body = resp.text
+            
+            # Use Selenium for the first few pages to get JavaScript-rendered content
+            use_selenium = (selenium_driver and page_count < 3)
+            if use_selenium:
+                print(f"  [selenium] rendering JavaScript for {url}", flush=True)
+                body = fetch_with_selenium(selenium_driver, url, timeout)
+                if body:
+                    content_type = "text/html"
+                else:
+                    # Fallback to requests if Selenium fails
+                    resp = fetch_url(session, url, stream=False, timeout=timeout)
+                    if not resp:
+                        visited_pages.add(url)
+                        time.sleep(delay)
+                        continue
+                    content_type = resp.headers.get("Content-Type", "")
+                    body = resp.text
+            else:
+                resp = fetch_url(session, url, stream=False, timeout=timeout)
+                if not resp:
+                    visited_pages.add(url)
+                    time.sleep(delay)
+                    continue
+                content_type = resp.headers.get("Content-Type", "")
+                body = resp.text
             # compute local path for this page
             local_page_path = url_to_path(outdir, base_netloc, url)
             downloaded[url] = local_page_path
@@ -492,6 +583,55 @@ def mirror(start_url, outdir, max_pages=1000, delay=0.5, obey_robots=True, same_
             print(f"  [saved page] {local_page_path}", flush=True)
             visited_pages.add(url)
             page_count += 1
+            
+            # Download resources immediately as they are discovered
+            if to_visit_resources:
+                # Process a small batch of resources immediately
+                batch_size = min(max_workers, len(to_visit_resources))
+                resource_batch = []
+                
+                for _ in range(batch_size):
+                    if to_visit_resources:
+                        res_url = to_visit_resources.pop(0)
+                        res_url, _ = urldefrag(res_url)
+                        if res_url in downloaded:
+                            continue
+                        if same_domain_only and not is_same_origin(base_netloc, res_url):
+                            downloaded[res_url] = None
+                            continue
+                        if not allowed_by_robots(res_url):
+                            print(f"[robots] skip resource {res_url}")
+                            downloaded[res_url] = None
+                            continue
+                        
+                        local_path = url_to_path(outdir, base_netloc, res_url)
+                        resource_batch.append((res_url, local_path))
+                
+                if resource_batch:
+                    print(f"[immediate batch] downloading {len(resource_batch)} resources...", flush=True)
+                    
+                    # Use ThreadPoolExecutor for concurrent downloads
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        # Submit all download tasks
+                        future_to_url = {
+                            executor.submit(download_resource_worker, session, url, local_path, timeout, delay/2, images_dir): url 
+                            for url, local_path in resource_batch
+                        }
+                        
+                        # Process completed downloads
+                        for future in as_completed(future_to_url):
+                            url = future_to_url[future]
+                            try:
+                                success, downloaded_url, local_path = future.result()
+                                if success:
+                                    downloaded[downloaded_url] = local_path
+                                    resource_count += 1
+                                else:
+                                    downloaded[downloaded_url] = None
+                            except Exception as e:
+                                print(f"  [immediate download error] {url} -> {e}")
+                                downloaded[url] = None
+            
             time.sleep(delay)
         else:
             # handle resource queue with concurrent downloads
@@ -602,6 +742,14 @@ def mirror(start_url, outdir, max_pages=1000, delay=0.5, obey_robots=True, same_
                 print(f"  [rewrote css] {local_path}")
             except Exception as e:
                 print(f"  [rewrite error css] {local_path} -> {e}")
+
+    # Clean up Selenium driver
+    if selenium_driver:
+        try:
+            selenium_driver.quit()
+            print("✓ Selenium driver closed", flush=True)
+        except Exception as e:
+            print(f"⚠️  Error closing Selenium driver: {e}", flush=True)
 
     print("\nDone.", flush=True)
     print(f"Pages saved: approx {page_count}; resources saved: approx {resource_count}", flush=True)
