@@ -1,7 +1,7 @@
 # Web Scraper Configuration
 # Edit this file or use the web interface to configure your scraper
 
-start_url=https://www.tagheuer.com/us/en/
+start_url=https://example.com/
 max_pages=1000
 delay=0.5
 max_workers=1
